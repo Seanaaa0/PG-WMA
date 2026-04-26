@@ -34,7 +34,7 @@ This avoids:
 Observation → StateEncoder → WorldMemory → Planner → SkillExecutor → Environment  
                                 ↑  
                              Monitor  
-
+```
 - StateEncoder → structured latent state  
 - WorldMemory → builds global map from partial observations  
 - Planner  
@@ -42,7 +42,7 @@ Observation → StateEncoder → WorldMemory → Planner → SkillExecutor → E
   - Rule / Predictive (fast): action execution  
 - Monitor → controls stability and replanning  
 - SkillExecutor → executes actions  
-```
+
 ---
 
 ## Components
@@ -175,6 +175,10 @@ skills/
   skill_executor.py
   move_k_steps_skill.py
   escape_loop_skill.py
+  base_skill.py
+  move_skill.py
+  move_until_blocked_skill.py
+  scan_skill.py
 
 scripts/
   run_agent.py
