@@ -131,12 +131,18 @@ Key-Door-Goal Grid World:
 
 ---
 
-## Results
+## Benchmark Results
 
-Example performance (20x20 grid):
+All experiments use a 20x20 partially observable key-door-goal grid world unless otherwise specified.
 
-- Success rate: ~98%  
-- Average steps: ~100  
+| Experiment | Runs | Success Rate | Avg Steps | Min | Max |
+|---|---:|---:|---:|---:|---:|
+| Rule V6a | 20 | 100% | 95.35 | 21 | 174 |
+| Predictive V8 | 20 | 95% | 94.32 | 25 | 198 |
+| Predictive + LLM V8 | 100 | 98% | 100.77 | 20 | 236 |
+| Rule V6a, repeat | 20 | 100% | 105.25 | 21 | 253 |
+
+A larger 25x25 Rule V6a run achieved 95% success over 20 runs with 165.63 average steps.
 
 ---
 
