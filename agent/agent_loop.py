@@ -3,6 +3,7 @@ from memory.world_memory import WorldMemory
 from monitor.monitor import Monitor
 from planner.rule_planner import RulePlanner
 from skills.skill_executor import SkillExecutor
+from planner.predictive_planner_v8 import PredictivePlannerV8
 
 import time
 
@@ -11,9 +12,23 @@ class PhaseController:
     """
     Thin adapter:
     - LLM decides current PHASE
+<<<<<<< HEAD
     - RulePlanner executes that phase through BFS / frontier / local fallback
     """
 
+=======
+    - fast planner executes that phase
+    - recover phase is handled here using loop-aware local escape
+    """
+
+    DIR_TO_DELTA = {
+        "UP": (-1, 0),
+        "DOWN": (1, 0),
+        "LEFT": (0, -1),
+        "RIGHT": (0, 1),
+    }
+
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
     def __init__(self, executor_planner=None):
         self.executor_planner = executor_planner or RulePlanner()
 
@@ -33,14 +48,31 @@ class PhaseController:
             phase = phase_decision.get("phase", None)
             phase_reason = phase_decision.get("reason", None)
 
+<<<<<<< HEAD
         # Hard recover stays outside RulePlanner
         if phase == "recover":
             return {"skill": "escape_loop", "args": {}}
 
+=======
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         planner_context = dict(planner_context or {})
         planner_context["forced_phase"] = phase
         planner_context["phase_reason"] = phase_reason
 
+<<<<<<< HEAD
+=======
+        # -------------------------------------------------
+        # Hard recover stays outside fast planner
+        # -------------------------------------------------
+        if phase == "recover":
+            return self._choose_recover_skill(
+                z_t=z_t,
+                memory_summary=memory_summary,
+                planner_context=planner_context,
+                last_info=last_info,
+            )
+
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         return self.executor_planner.choose_skill(
             z_t=z_t,
             memory_summary=memory_summary,
@@ -52,6 +84,108 @@ class PhaseController:
             last_info=last_info,
         )
 
+<<<<<<< HEAD
+=======
+    def _choose_recover_skill(
+        self,
+        z_t: dict,
+        memory_summary: dict,
+        planner_context: dict,
+        last_info: dict | None,
+    ) -> dict:
+        """
+        Recovery policy:
+        1. Avoid moving back into oscillation pair cells if possible
+        2. Prefer legal neighbors with lower visit counts
+        3. Prefer not to immediately reverse the last action
+        4. If no safe move exists, fall back to scan
+        """
+        agent_pos = tuple(z_t["agent_pos"])
+        walls = z_t["local_walls"]
+        loop_hints = planner_context.get("loop_hints", {}) or {}
+
+        oscillation_pair = loop_hints.get("oscillation_pair", None)
+        recent_positions = loop_hints.get("recent_positions", []) or []
+
+        banned_positions = set()
+        if oscillation_pair is not None:
+            for p in oscillation_pair:
+                banned_positions.add(tuple(p))
+
+        visit_counts = memory_summary.get("visit_counts", {}) or {}
+
+        last_action = None
+        if last_info is not None:
+            last_action = last_info.get("action", None)
+            if isinstance(last_action, str):
+                last_action = last_action.upper()
+
+        reverse_of_last = {
+            "UP": "DOWN",
+            "DOWN": "UP",
+            "LEFT": "RIGHT",
+            "RIGHT": "LEFT",
+        }.get(last_action, None)
+
+        candidates = []
+
+        for direction, (dr, dc) in self.DIR_TO_DELTA.items():
+            wall_key = direction.lower()
+            if walls.get(wall_key, False):
+                continue
+
+            next_pos = (agent_pos[0] + dr, agent_pos[1] + dc)
+
+            score = 0.0
+
+            # Strong penalty: do not stay inside oscillation pair if avoidable
+            if next_pos in banned_positions:
+                score -= 100.0
+            else:
+                score += 20.0
+
+            # Penalize immediate reverse of last action
+            if reverse_of_last is not None and direction == reverse_of_last:
+                score -= 15.0
+
+            # Penalize revisits
+            score -= 2.0 * float(visit_counts.get(next_pos, 0))
+
+            # Prefer positions not in recent positions
+            if next_pos not in [tuple(p) for p in recent_positions]:
+                score += 8.0
+
+            # Mild preference for unexplored / less visited area
+            if visit_counts.get(next_pos, 0) == 0:
+                score += 5.0
+
+            candidates.append((score, direction, next_pos))
+
+        if not candidates:
+            return {"skill": "scan", "args": {}}
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_direction, best_next_pos = candidates[0]
+
+        # If every legal move still stays inside the same oscillation trap, scan instead
+        if best_next_pos in banned_positions and len(candidates) == 1:
+            return {"skill": "scan", "args": {}}
+
+        # If top choice is still inside banned pair but there exists an outside option, use outside option
+        for score, direction, next_pos in candidates:
+            if next_pos not in banned_positions:
+                return {
+                    "skill": "move",
+                    "args": {"direction": direction},
+                }
+
+        # Otherwise use the best available move
+        return {
+            "skill": "move",
+            "args": {"direction": best_direction},
+        }
+
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
 
 class AgentLoop:
     """
@@ -67,7 +201,18 @@ class AgentLoop:
     - keep RulePlanner as robust execution backbone
     """
 
+<<<<<<< HEAD
     def __init__(self, env, planner=None, sleep_time=0.0, verbose=True):
+=======
+    def __init__(
+        self,
+        env,
+        fast_planner=None,
+        slow_planner=None,
+        sleep_time=0.0,
+        verbose=True,
+    ):
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         self.env = env
         self.verbose = verbose
 
@@ -84,6 +229,7 @@ class AgentLoop:
         )
 
         # ---------------------------------
+<<<<<<< HEAD
         # Planner split
         # ---------------------------------
         self.fast_planner = RulePlanner()
@@ -101,12 +247,30 @@ class AgentLoop:
         self.executor = SkillExecutor()
 
         # Predictor disabled in this version
+=======
+        # Dual planner split
+        # ---------------------------------
+        self.fast_planner = fast_planner if fast_planner is not None else RulePlanner()
+        self.slow_planner = slow_planner
+
+        self.phase_controller = PhaseController(
+            executor_planner=self.fast_planner
+        )
+        self.executor = SkillExecutor()
+
+        # Predictor disabled in AgentLoop itself.
+        # Predictor lives inside fast planner (e.g. PredictivePlannerV8).
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         self.predictor = None
         self.predictor_enabled = False
 
         if self.verbose:
             print("[AgentLoop] Predictor disabled.")
+<<<<<<< HEAD
             print("[AgentLoop] V5-b mode: LLM decides PHASE, RulePlanner executes.")
+=======
+            print("[AgentLoop] V5-b mode: LLM decides PHASE, fast planner executes.")
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
 
         self.current_skill = None
         self.current_skill_steps = 0
@@ -161,7 +325,11 @@ class AgentLoop:
         last_info,
     ):
         """
+<<<<<<< HEAD
         Tight routing for V5-b:
+=======
+        Tight routing for V5-b / V8:
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         slow planner only updates high-level phase when phase-relevant events happen.
         """
 
@@ -214,8 +382,12 @@ class AgentLoop:
         if self.consecutive_local_failures >= 2:
             return True
 
+<<<<<<< HEAD
         # 6) DO NOT refresh phase on generic REPLAN by default.
         # local replans should usually stay inside the current phase.
+=======
+        # 6) generic REPLAN alone does not always mean phase change
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
         return False
 
     def _update_phase_if_needed(
@@ -254,20 +426,48 @@ class AgentLoop:
         )
 
         if self.verbose:
+<<<<<<< HEAD
             print("[Phase Update] current_phase_decision =",
                   self.current_phase_decision)
 
+=======
+            print(
+                "[Phase Update]",
+                {
+                    "step": z_t["step_count"],
+                    "agent_pos": z_t["agent_pos"],
+                    "has_key": z_t["has_key"],
+                    "decision": decision,
+                    "last_info": {
+                        "picked_key": last_info.get("picked_key", False) if last_info else False,
+                        "opened_door": last_info.get("opened_door", False) if last_info else False,
+                        "hit_wall": last_info.get("hit_wall", False) if last_info else False,
+                        "blocked_by_locked_door": last_info.get("blocked_by_locked_door", False) if last_info else False,
+                    },
+                    "phase": self.current_phase_decision,
+                },
+            )
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
     # =========================================================
     # Planner context
     # =========================================================
 
     def _build_planner_context(self, z_t):
+<<<<<<< HEAD
         return self.memory.get_planner_context(
+=======
+        ctx = self.memory.get_planner_context(
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
             agent_pos=z_t["agent_pos"],
             patch_radius=3,
             top_k_frontiers=5,
         )
+<<<<<<< HEAD
 
+=======
+        ctx["memory_obj"] = self.memory
+        return ctx
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
     # =========================================================
     # Skill invalidation
     # =========================================================
@@ -317,7 +517,10 @@ class AgentLoop:
     # =========================================================
     # Main run loop
     # =========================================================
+<<<<<<< HEAD
 
+=======
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
     def run(self, max_steps=200):
         obs_t = self.env.reset()
         self.memory.reset()
@@ -364,17 +567,36 @@ class AgentLoop:
 
             decision = monitor_result["decision"]
 
-            if self.verbose:
+            should_print_step_summary = (
+                step < 8
+                or step % 20 == 0
+                or monitor_result["decision"] == "REPLAN"
+                or (last_info is not None and last_info.get("picked_key", False))
+                or (last_info is not None and last_info.get("opened_door", False))
+                or step >= max_steps - 30
+            )
+
+            if self.verbose and should_print_step_summary:
                 print(f"[Step {step + 1}]")
-                print("z_t =", z_t)
-                print("memory_summary =", memory_summary)
-                print("memory_patch =", planner_context["memory_patch"])
-                print("frontier_candidates =",
-                      planner_context["frontier_candidates"])
+                print("agent_pos =", z_t["agent_pos"])
+                print("has_key =", z_t["has_key"])
+                print("visible_key_pos =", z_t.get("visible_key_pos"))
+                print("visible_door_pos =", z_t.get("visible_door_pos"))
+                print("visible_goal_pos =", z_t.get("visible_goal_pos"))
+                print("memory_known_key =", memory_summary.get("known_key_pos"))
+                print("memory_known_door =",
+                      memory_summary.get("known_door_pos"))
+                print("memory_known_door_open =",
+                      memory_summary.get("known_door_open"))
+                print("memory_known_goal =",
+                      memory_summary.get("known_goal_pos"))
                 print("loop_hints =", planner_context["loop_hints"])
                 print("monitor =", monitor_result)
                 print("current_phase_decision =", self.current_phase_decision)
+<<<<<<< HEAD
 
+=======
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
             if decision == "STOP":
                 print("Monitor STOP:", monitor_result["reason"])
                 break
@@ -408,6 +630,7 @@ class AgentLoop:
                 )
                 self.current_skill_steps = 0
 
+<<<<<<< HEAD
             skill_spec = self.current_skill
 
             if skill_spec["skill"] == "scan":
@@ -415,18 +638,23 @@ class AgentLoop:
 
             if self.verbose:
                 print("chosen_skill =", skill_spec)
+=======
+                if self.verbose and should_print_step_summary:
+                    print("chosen_skill =", self.current_skill)
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
 
             execution_result = self.executor.execute(
-                self.env,
-                skill_spec,
-            )
+                self.env, self.current_skill)
+            self.current_skill_steps += 1
 
             obs_tp1 = execution_result["obs"]
             done = execution_result["done"]
             info = execution_result["info"]
 
-            z_tp1 = self.encoder.encode(obs_tp1)
+            if self.current_skill.get("skill") == "scan":
+                self.scan_count += 1
 
+<<<<<<< HEAD
             monitor_prediction = self.monitor.decide(
                 z_t=z_tp1,
                 memory=self.memory,
@@ -439,50 +667,84 @@ class AgentLoop:
                 or info.get("out_of_bounds")
             )
             if had_local_failure:
+=======
+            if (
+                info.get("hit_wall", False)
+                or info.get("out_of_bounds", False)
+                or info.get("blocked_by_locked_door", False)
+            ):
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)
                 self.consecutive_local_failures += 1
             else:
                 self.consecutive_local_failures = 0
 
+            z_tp1 = self.encoder.encode(obs_tp1)
+
             invalidate_skill = self._should_invalidate_after_execution(
-                skill_spec=skill_spec,
+                skill_spec=self.current_skill,
                 info=info,
                 z_tp1=z_tp1,
                 memory_summary_before_step=memory_summary,
-                monitor_prediction=monitor_prediction,
+                monitor_prediction=self.monitor.decide(
+                    z_t=z_tp1,
+                    memory=self.memory,
+                    last_info=info,
+                    prediction_signal=None,
+                ),
             )
 
             if invalidate_skill:
                 self.current_skill = None
-
-            if self.current_skill is None:
                 self.current_skill_steps = 0
-            else:
-                self.current_skill_steps += 1
 
-            if self.verbose:
-                print("execution_result =", execution_result)
+            if self.verbose and should_print_step_summary:
                 print(
-                    f"[Fast Layer] invalidate_skill = {invalidate_skill}, "
-                    f"current_skill_steps = {self.current_skill_steps}, "
-                    f"current_skill = {self.current_skill}, "
-                    f"consecutive_local_failures = {self.consecutive_local_failures}"
+                    "execution_info =",
+                    {
+                        "old_pos": info.get("old_pos"),
+                        "new_pos": info.get("new_pos"),
+                        "hit_wall": info.get("hit_wall"),
+                        "out_of_bounds": info.get("out_of_bounds"),
+                        "blocked_by_locked_door": info.get("blocked_by_locked_door"),
+                        "picked_key": info.get("picked_key"),
+                        "opened_door": info.get("opened_door"),
+                        "goal_reached": info.get("goal_reached"),
+                        "step_count": info.get("step_count"),
+                    },
                 )
-                self.env.render()
+                print(
+                    "[Fast Layer] invalidate_skill =",
+                    invalidate_skill,
+                    ", current_skill_steps =",
+                    self.current_skill_steps,
+                    ", current_skill =",
+                    self.current_skill,
+                    ", consecutive_local_failures =",
+                    self.consecutive_local_failures,
+                    sep="",
+                )
+                print("has_key:", z_tp1.get("has_key", False))
+                print(f"steps: {info.get('step_count', step + 1)}/{max_steps}")
+                print()
 
             obs_t = obs_tp1
             last_info = info
 
+            if done:
+                if info.get("goal_reached", False):
+                    if self.verbose:
+                        print("[Episode End] Goal reached.")
+                    return True, final_step
+
+                if self.verbose:
+                    print("[Episode End] Done without goal.")
+                return False, final_step
+
             if self.sleep_time > 0:
                 time.sleep(self.sleep_time)
 
-            if done:
-                if last_info is not None and last_info.get("goal_reached", False):
-                    print("Goal reached!")
-                else:
-                    print("Episode finished.")
-                break
-
         if self.verbose:
+<<<<<<< HEAD
             print("=== Agent Loop Finished ===")
             final_z = self.encoder.encode(obs_t)
             print("final_z =", final_z)
@@ -503,3 +765,7 @@ class AgentLoop:
             return True, final_step
         else:
             return False, final_step
+=======
+            print("[Episode End] Max steps reached.")
+        return False, final_step
+>>>>>>> 79ef4bf (V6: fast-slow + phase + predictor stable version)

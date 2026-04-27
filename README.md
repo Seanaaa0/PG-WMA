@@ -1,233 +1,227 @@
-# Phase-Guided World Model Agent (PG-WMA)
+# Hybrid Planning Agent for Partial Observability (PG-WMA)
 
-## Problem
+A modular agent system designed for stable decision-making under partial observability.
 
-This project started from a simple assumption:
+This project explores how to combine:
 
-If an agent can decompose a task into steps, it should be able to solve it.
+- structured state representation
+- memory-based world reconstruction
+- high-level planning (LLM)
+- low-level execution (rule / predictive)
 
-However, this turns out to be insufficient in partially observable environments.
-
-The main issue is that the agent does not operate on fully interpretable states.  
-Instead, it relies on latent representations that are not directly meaningful, and these are difficult for an LLM to reason about in a stable way.
-
-As a result:
-
-- step-level decomposition alone is not enough
-- LLM decisions become inconsistent when grounded on weak representations
-- execution can easily become unstable or inefficient
+into a coherent and robust agent architecture.
 
 ---
 
-### Initial Direction: World Model
+## Core Idea
 
-An early approach in this project was to introduce a learned world model (e.g., JEPA-style encoding) to bridge perception and planning.
+Instead of letting a single model handle everything:
 
-The idea was to:
+LLM → decides WHAT to do  
+Planner → decides HOW to do it  
 
-- encode observations into a structured latent space
-- use that latent space for prediction and decision making
+This avoids:
 
-However, in practice, this approach faced several limitations:
-
-- different interaction types often require separate learned predictors
-- the system becomes increasingly complex as more events are introduced
-- without a general-purpose world model, this approach does not scale well
+- unstable token-level control
+- poor reasoning over latent states
+- excessive dependence on LLM
 
 ---
 
-### Current Direction
-
-Given these constraints, the project shifts toward a more practical design.
-
-Instead of relying on a fully learned world model, the system separates responsibilities:
-
-- the LLM handles high-level phase decisions
-- a memory module maintains a structured view of the environment
-- a rule-based planner handles low-level execution
-
-This design is more limited in generality, but more stable in practice.
-
----
-
-### Summary
-
-This project explores how to structure an agent when:
-
-- the environment is partially observable
-- the representation is imperfect
-- and a general world model is not yet available
-
-The goal is not to provide a general solution, but to study a workable intermediate design.
-
----
-
-## Overview
-
-This repository studies a practical agent architecture for partially observable, multi-stage tasks.
-
-Instead of using a single policy to handle everything, the system separates:
-
-- state representation
-- memory construction
-- high-level phase planning
-- low-level execution
-
-The current environment is a key-door-goal grid world, used as a controlled testbed for this architecture.
+## System Architecture
 
 ```mermaid
-flowchart TD
-    A[Environment Observation] --> B[State Encoder]
-    B --> C[World Memory]
-    C --> D[LLM Planner: Phase Decision]
-    C --> E[Rule Planner: Execution Policy]
-    D --> E
-    E --> F[Skill Executor]
-    F --> G[Environment]
-    G --> A
+graph TD
+    A[Observation] --> B[StateEncoder]
+    B --> C[WorldMemory]
+    C --> D[Planner]
+    D --> E[SkillExecutor]
+    E --> F[Environment]
 
-    C --> H[Monitor]
-    H --> D
-    H --> E
+    M[Monitor] --> D
 ```
-
-This architecture separates high-level reasoning from low-level control.  
-The LLM selects the current phase, while the rule planner handles execution.
-
----
-
-## Architecture
-
-At the task level, the environment follows a structured dependency:
-
-the agent must first obtain the key, then handle the door, and finally reach the goal.
-
-```mermaid
-flowchart LR
-    A[find_key] --> B[go_to_door]
-    B --> C[search_goal]
-    C --> D[go_to_goal]
-```
-
-These phases guide behavior but do not directly produce actions.  
-The execution layer is responsible for movement and interaction.
+- StateEncoder → structured latent state  
+- WorldMemory → builds global map from partial observations  
+- Planner  
+  - LLM (slow): phase decision  
+  - Rule / Predictive (fast): action execution  
+- Monitor → controls stability and replanning  
+- SkillExecutor → executes actions  
 
 ---
 
-### Core flow
+## Components
 
-`observation -> encoding -> memory update -> phase decision -> skill execution -> repeat`
+### StateEncoder
 
----
+Transforms raw observation into structured state:
 
-### Components
-
-#### 1. State Encoder
-Converts observations into structured state:
-- agent position
-- local walls
-- visible objects
-- inventory state
-
-#### 2. World Memory
-Stores:
-- visited positions
-- known map structure
-- object locations
-- visit statistics
-
-Also supports:
-- BFS path planning
-- frontier exploration
-- loop detection
-
-#### 3. LLM Planner
-- outputs high-level phase only
-- does NOT control movement
-
-#### 4. Rule Planner
-Handles:
-- path following
-- exploration
-- local decision making
-
-#### 5. Skill Executor
-Executes:
-- move
-- scan
-- escape_loop
-
-#### 6. Monitor
-Tracks:
-- failure
-- loops
-- key events (key pickup, door open)
+- agent position  
+- local walls  
+- visible objects  
+- task state (key / door / goal)  
 
 ---
 
-### Design principle
+### WorldMemory
 
-- LLM → decides what to do
-- Rule system → decides how to do it
+Maintains global understanding:
+
+- visited positions  
+- known walls / free cells  
+- object memory (key / door / goal)  
+- BFS path planning  
+
+---
+
+### Monitor
+
+Handles control logic:
+
+- detects oscillation / stuck states  
+- triggers replanning  
+- handles failure signals  
+
+---
+
+### Planner (Fast–Slow Design)
+
+#### Slow planner (LLM)
+
+Outputs high-level phase:
+
+- find_key  
+- go_to_door  
+- search_goal  
+- go_to_goal  
+- recover  
+
+---
+
+#### Fast planner (Rule / Predictive)
+
+Executes actions:
+
+- BFS to known targets  
+- frontier exploration  
+- local fallback strategies  
+- optional predictor rollout  
+
+---
+
+### Predictor (Optional)
+
+Lightweight dynamics model:
+
+- predicts next state  
+- improves local decision quality  
+- reduces trial-and-error exploration  
 
 ---
 
 ## Environment
 
-Grid-world environment with:
+Key-Door-Goal Grid World:
 
-- partial observability
-- key-door-goal dependency
-- walls and obstacles
-
----
-
-## Results
-
-| Setting | Success Rate | Average Steps |
-|--------|-------------:|--------------:|
-| 10x10, 7x7 view | 1.00 | 25.65 |
-| 15x15, 7x7 view | 0.90 | 74.56 |
+- partial observability (local view only)  
+- multi-stage task:
+  1. `find key`
+  2. `open door`
+  3. `reach goal`  
 
 ---
 
-## Training (Predictor)
+## Benchmark Results
 
-Includes scripts for:
+All experiments use a 20x20 partially observable key-door-goal grid world unless otherwise specified.
 
-- dataset collection
-- MLP predictor training
+| Experiment | Runs | Success Rate | Avg Steps | Min | Max |
+|---|---:|---:|---:|---:|---:|
+| Rule V6a | 20 | 100% | 95.35 | 21 | 174 |
+| Predictive V8 | 20 | 95% | 94.32 | 25 | 198 |
+| Predictive + LLM V8 | 100 | 98% | 100.77 | 20 | 236 |
+| Rule V6a, repeat | 20 | 100% | 105.25 | 21 | 253 |
 
-Used for optional model-based planning.
+A larger 25x25 Rule V6a run achieved 95% success over 20 runs with 165.63 average steps.
+--- 
 
----
 
 ## How to Run
 
-```bash
-python -m run.run_agent
-```
+python run_agent.py
+
+Optional modes (inside code):
+
+- rule  
+- predictive  
+- llm_slow  
+- hybrid (LLM + predictive)  
 
 ---
 
 ## Project Structure
+```text
+agent/
+  agent_loop.py
 
-- agent/
-- planner/
-- memory/
-- encoder/
-- skills/
-- env/
-- monitor/
-- run/
-- scripts/
-- visual/
+encoder/
+  state_encoder.py
+
+memory/
+  world_memory.py
+
+planner/
+  rule_planner.py
+  predictive_planner_v8.py
+  llm_planner.py
+
+predictor/
+  mlp_predictor.py
+  jepa_lite_predictor.py
+
+env/
+  maze_env.py
+
+skills/
+  skill_executor.py
+  move_k_steps_skill.py
+  escape_loop_skill.py
+  base_skill.py
+  move_skill.py
+  move_until_blocked_skill.py
+  scan_skill.py
+
+scripts/
+  run_agent.py
+  collect_predictor_dataset.py
+  train_predictor.py
+```
 
 ---
 
-## Future Work
+## Motivation
 
-- stronger world models
-- larger environments
-- multi-step prediction
-- learned execution policies
+This project studies:
+
+- how to stabilize LLM-based agents  
+- how to separate planning and execution  
+- how to use memory instead of full world models  
+- how lightweight predictors improve decision-making  
+
+---
+
+## Key Insight
+
+System design matters more than model size.
+
+Even strong LLMs fail without:
+
+- structured state  
+- proper control flow  
+- execution constraints  
+
+---
+
+## License
+
+MIT
